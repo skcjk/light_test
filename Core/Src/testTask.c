@@ -48,6 +48,7 @@ void TestTask(void *argument){
         if (debugMode==1) continue;
         HAL_RTC_GetTime(&hrtc, &RTC_TimeStruct, RTC_FORMAT_BIN);
         HAL_RTC_GetDate(&hrtc, &RTC_DateStruct, RTC_FORMAT_BIN);
+        Date_write_BKP(&hrtc,&RTC_DateStruct);  // 更新备份寄存器中的日期信息,调用HAL_RTC_GetTime后会清空天数计数器，所以必须将日期保存至备份区
         if (preset_index >= TEST_DATA_LEN) {
             preset_index = 0; // 重置索引
         }
