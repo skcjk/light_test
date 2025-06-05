@@ -1,0 +1,180 @@
+#include "testTask.h"
+#include <math.h>
+#include "SDTask.h"
+#include "cmsis_os.h"
+#include "usart.h"
+#include "rtc.h"
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#define TEST_DATA_LEN 10
+#define TX_COUNT 10
+
+extern osMutexId printMutexHandle;
+extern rxStruct rx1S;
+extern rxStruct rx2S;
+extern uint8_t rx1Mutex;
+extern uint8_t rx2Mutex;
+extern uint8_t debugMode;
+extern osMessageQId sdCmdQueueHandle;
+extern osPoolId  sdCmdQueuePoolHandle;
+extern RTC_TimeTypeDef RTC_TimeStruct;  
+extern RTC_DateTypeDef RTC_DateStruct;
+extern uint8_t aRx2Buffer;	
+
+static sdStruct *sdSForQueue;
+
+const char *preset_data[TEST_DATA_LEN] = {
+    "TestData12345678",
+    "TestData12345678",
+    "TestData12345678",
+    "TestData12345678",
+    "TestData12345678",
+    "TestData12345678",
+    "TestData12345678",
+    "TestData12345678",
+    "TestData12345678",
+    "TestData12345678"
+};
+uint8_t preset_index = 0;
+
+void TestTask(void *argument){
+    HAL_UART_Receive_IT(&huart2, (uint8_t *)&aRx2Buffer, 1);
+    while (1)
+    {
+        osDelay(1000);
+        if (debugMode==1) continue;
+        HAL_RTC_GetTime(&hrtc, &RTC_TimeStruct, RTC_FORMAT_BIN);
+        HAL_RTC_GetDate(&hrtc, &RTC_DateStruct, RTC_FORMAT_BIN);
+        if (preset_index >= TEST_DATA_LEN) {
+            preset_index = 0; // 重置索引
+        }
+
+        // 将发送的数据以JSON格式写入sd卡，使用RTC时间
+        sdSForQueue = osPoolAlloc(sdCmdQueuePoolHandle);
+        if (sdSForQueue != NULL) {
+            sdSForQueue->sd_cmd = SD_WRITE;
+            snprintf((char *)sdSForQueue->rx_buf, SD_BUF_LEN,
+            "{\"source_data\":\"%s\",\"count\":%d,\"year\":%04d,\"month\":%02d,\"day\":%02d,\"hour\":%02d,\"minute\":%02d,\"second\":%02d}\r\n",
+            preset_data[preset_index],
+            TX_COUNT,
+            RTC_DateStruct.Year + 2000,
+            RTC_DateStruct.Month,
+            RTC_DateStruct.Date,
+            RTC_TimeStruct.Hours,
+            RTC_TimeStruct.Minutes,
+            RTC_TimeStruct.Seconds);
+            if (osOK != osMessagePut(sdCmdQueueHandle, (uint32_t)sdSForQueue, osWaitForever)) {
+            osPoolFree(sdCmdQueuePoolHandle, sdSForQueue); 
+            }
+        }
+
+        osDelay(3000);
+        osMutexWait(printMutexHandle, osWaitForever);
+        for (int i = 0; i < TX_COUNT; i++) {
+            printf("%s", preset_data[preset_index]);
+        }
+        osMutexRelease(printMutexHandle);
+        osDelay(100);
+        // 将usart2收到的数据以JSON格式写入sd卡，使用RTC时间
+        sdSForQueue = osPoolAlloc(sdCmdQueuePoolHandle);
+        if (sdSForQueue != NULL) {
+            sdSForQueue->sd_cmd = SD_WRITE;
+            rx2Mutex = 1; // 锁定接收缓冲区，防止其他任务修改
+            snprintf((char *)sdSForQueue->rx_buf, SD_BUF_LEN,
+            "{\"tx1_rx2_data\":\"%s\",\"year\":%04d,\"month\":%02d,\"day\":%02d,\"hour\":%02d,\"minute\":%02d,\"second\":%02d}\r\n",
+            rx2S.rx_buf,
+            RTC_DateStruct.Year + 2000,
+            RTC_DateStruct.Month,
+            RTC_DateStruct.Date,
+            RTC_TimeStruct.Hours,
+            RTC_TimeStruct.Minutes,
+            RTC_TimeStruct.Seconds);
+            memset(rx2S.rx_buf, 0x00, RX_BUF_LEN);
+            rx2S.data_length = 0; // 清空接收缓冲区
+            rx2Mutex = 0; // 解锁接收缓冲区
+            if (osOK != osMessagePut(sdCmdQueueHandle, (uint32_t)sdSForQueue, osWaitForever)) {
+                osPoolFree(sdCmdQueuePoolHandle, sdSForQueue); 
+            }
+        }
+        // 将usart1收到的数据以JSON格式写入sd卡，使用RTC时间
+        sdSForQueue = osPoolAlloc(sdCmdQueuePoolHandle);
+        if (sdSForQueue != NULL) {
+            sdSForQueue->sd_cmd = SD_WRITE;
+            rx1Mutex = 1; // 锁定接收缓冲区，防止其他任务修改
+            snprintf((char *)sdSForQueue->rx_buf, SD_BUF_LEN,
+            "{\"tx1_rx1_data\":\"%s\",\"year\":%04d,\"month\":%02d,\"day\":%02d,\"hour\":%02d,\"minute\":%02d,\"second\":%02d}\r\n",
+            rx1S.rx_buf,
+            RTC_DateStruct.Year + 2000,
+            RTC_DateStruct.Month,
+            RTC_DateStruct.Date,
+            RTC_TimeStruct.Hours,
+            RTC_TimeStruct.Minutes,
+            RTC_TimeStruct.Seconds);
+            memset(rx1S.rx_buf, 0x00, RX_BUF_LEN);
+            rx1S.data_length = 0; // 清空接收缓冲区
+            rx1Mutex = 0; // 解锁接收缓冲区
+            if (osOK != osMessagePut(sdCmdQueueHandle, (uint32_t)sdSForQueue, osWaitForever)) {
+                osPoolFree(sdCmdQueuePoolHandle, sdSForQueue); 
+            }
+        }
+
+        osDelay(3000);
+        osMutexWait(printMutexHandle, osWaitForever);
+        for (int i = 0; i < TX_COUNT; i++) {
+            HAL_UART_Transmit(&huart2, (const uint8_t *)preset_data[preset_index], strlen(preset_data[preset_index]), 0xFF);
+        }
+        while (huart2.gState != HAL_UART_STATE_READY) {
+            osDelay(1); // 等待UART状态变为READY
+        }
+        osMutexRelease(printMutexHandle);
+        osDelay(100);
+        // 将usart1收到的数据以JSON格式写入sd卡，使用RTC时间
+        sdSForQueue = osPoolAlloc(sdCmdQueuePoolHandle);
+        if (sdSForQueue != NULL) {
+            sdSForQueue->sd_cmd = SD_WRITE;
+            rx1Mutex = 1; // 锁定接收缓冲区，防止其他任务修改
+            snprintf((char *)sdSForQueue->rx_buf, SD_BUF_LEN,
+            "{\"tx2_rx1_data\":\"%s\",\"year\":%04d,\"month\":%02d,\"day\":%02d,\"hour\":%02d,\"minute\":%02d,\"second\":%02d}\r\n",
+            rx1S.rx_buf,
+            RTC_DateStruct.Year + 2000,
+            RTC_DateStruct.Month,
+            RTC_DateStruct.Date,
+            RTC_TimeStruct.Hours,
+            RTC_TimeStruct.Minutes,
+            RTC_TimeStruct.Seconds);
+            memset(rx1S.rx_buf, 0x00, RX_BUF_LEN);
+            rx1S.data_length = 0; // 清空接收缓冲区
+            rx1Mutex = 0; // 解锁接收缓冲区
+            if (osOK != osMessagePut(sdCmdQueueHandle, (uint32_t)sdSForQueue, osWaitForever)) {
+                osPoolFree(sdCmdQueuePoolHandle, sdSForQueue); 
+            }
+        }
+        // 将usart2收到的数据以JSON格式写入sd卡，使用RTC时间
+        sdSForQueue = osPoolAlloc(sdCmdQueuePoolHandle);
+        if (sdSForQueue != NULL) {
+            sdSForQueue->sd_cmd = SD_WRITE;
+            rx2Mutex = 1; // 锁定接收缓冲区，防止其他任务修改
+            snprintf((char *)sdSForQueue->rx_buf, SD_BUF_LEN,
+            "{\"tx2_rx2_data\":\"%s\",\"year\":%04d,\"month\":%02d,\"day\":%02d,\"hour\":%02d,\"minute\":%02d,\"second\":%02d}\r\n",
+            rx2S.rx_buf,
+            RTC_DateStruct.Year + 2000,
+            RTC_DateStruct.Month,
+            RTC_DateStruct.Date,
+            RTC_TimeStruct.Hours,
+            RTC_TimeStruct.Minutes,
+            RTC_TimeStruct.Seconds);
+            memset(rx2S.rx_buf, 0x00, RX_BUF_LEN);
+            rx2S.data_length = 0; // 清空接收缓冲区
+            rx2Mutex = 0; // 解锁接收缓冲区
+            if (osOK != osMessagePut(sdCmdQueueHandle, (uint32_t)sdSForQueue, osWaitForever)) {
+                osPoolFree(sdCmdQueuePoolHandle, sdSForQueue); 
+            }
+        }
+
+        preset_index++;
+    }
+    
+}
