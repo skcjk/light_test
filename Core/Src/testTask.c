@@ -9,9 +9,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define TEST_DATA_LEN 10
-#define TX_COUNT 10
-
 extern osMutexId printMutexHandle;
 extern rxStruct rx1S;
 extern rxStruct rx2S;
@@ -26,19 +23,9 @@ extern uint8_t aRx2Buffer;
 
 static sdStruct *sdSForQueue;
 
-const char *preset_data[TEST_DATA_LEN] = {
-    "TestData12345678",
-    "TestData12345678",
-    "TestData12345678",
-    "TestData12345678",
-    "TestData12345678",
-    "TestData12345678",
-    "TestData12345678",
-    "TestData12345678",
-    "TestData12345678",
-    "TestData12345678"
+const char *preset_data = {
+    "00_01_02_03_04_05_06_07_08_09_0a_0b_0c_0d_0e_0f_10_11_12_13_14_15_16_17_18_19_1a_1b_1c_1d_1e_1f_20_21_22_23_24_25_26_27_28_29_2a_2b_2c_2d_2e_2f_30"
 };
-uint8_t preset_index = 0;
 
 void TestTask(void *argument){
     HAL_UART_Receive_IT(&huart2, (uint8_t *)&aRx2Buffer, 1);
@@ -49,18 +36,14 @@ void TestTask(void *argument){
         HAL_RTC_GetTime(&hrtc, &RTC_TimeStruct, RTC_FORMAT_BIN);
         HAL_RTC_GetDate(&hrtc, &RTC_DateStruct, RTC_FORMAT_BIN);
         Date_write_BKP(&hrtc,&RTC_DateStruct);  // 更新备份寄存器中的日期信息,调用HAL_RTC_GetTime后会清空天数计数器，所以必须将日期保存至备份区
-        if (preset_index >= TEST_DATA_LEN) {
-            preset_index = 0; // 重置索引
-        }
 
         // 将发送的数据以JSON格式写入sd卡，使用RTC时间
         sdSForQueue = osPoolAlloc(sdCmdQueuePoolHandle);
         if (sdSForQueue != NULL) {
             sdSForQueue->sd_cmd = SD_WRITE;
             snprintf((char *)sdSForQueue->rx_buf, SD_BUF_LEN,
-            "{\"source_data\":\"%s\",\"count\":%d,\"year\":%04d,\"month\":%02d,\"day\":%02d,\"hour\":%02d,\"minute\":%02d,\"second\":%02d}\r\n",
-            preset_data[preset_index],
-            TX_COUNT,
+            "{\"source_data\":\"%s\",\"year\":%04d,\"month\":%02d,\"day\":%02d,\"hour\":%02d,\"minute\":%02d,\"second\":%02d}\r\n",
+            preset_data,
             RTC_DateStruct.Year + 2000,
             RTC_DateStruct.Month,
             RTC_DateStruct.Date,
@@ -74,9 +57,7 @@ void TestTask(void *argument){
 
         osDelay(3000);
         osMutexWait(printMutexHandle, osWaitForever);
-        for (int i = 0; i < TX_COUNT; i++) {
-            printf("%s", preset_data[preset_index]);
-        }
+        printf("%s", preset_data);
         osMutexRelease(printMutexHandle);
         osDelay(100);
         // 将usart2收到的数据以JSON格式写入sd卡，使用RTC时间
@@ -124,9 +105,7 @@ void TestTask(void *argument){
 
         osDelay(3000);
         osMutexWait(printMutexHandle, osWaitForever);
-        for (int i = 0; i < TX_COUNT; i++) {
-            HAL_UART_Transmit(&huart2, (const uint8_t *)preset_data[preset_index], strlen(preset_data[preset_index]), 0xFF);
-        }
+        HAL_UART_Transmit(&huart2, (const uint8_t *)preset_data, strlen(preset_data), 0xFF);
         while (huart2.gState != HAL_UART_STATE_READY) {
             osDelay(1); // 等待UART状态变为READY
         }
@@ -175,7 +154,6 @@ void TestTask(void *argument){
             }
         }
 
-        preset_index++;
     }
     
 }
